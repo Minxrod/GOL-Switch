@@ -7,21 +7,38 @@
 #define FB_WIDTH  1280
 #define FB_HEIGHT 720
 
-#define MAP_WIDTH 120
-#define MAP_HEIGHT 120
+#define MAX_WIDTH  1280
+#define MAX_HEIGHT 720
+#define MAX_SCALE  80
+#define MAX_MAP_SIZE (MAX_WIDTH * MAX_HEIGHT)
 
+//functions
+void init_map();
 void init_cells();
 void update_all_cells();
 void draw_all_cells();
+void swap_offset();
 
 int sum_cells_in_area(int x, int y);
+
+void set_pixel(int x, int y, int rgba8888);
+void set_pos(int x, int y, int value);
 int get_pos(int x, int y);
 
-int old_cells[MAP_WIDTH * MAP_HEIGHT];
-int cells[MAP_WIDTH * MAP_HEIGHT];
+//variables
+int map_width;  //x size
+int map_height; //y size
+int map_scale;  //zoom on screen
+int map_offset; //which half of array is being written to
 
+int cells[MAX_MAP_SIZE * 2]; //max map size * 2
+
+//stuff I don't really understand
 NWindow* win;
 Framebuffer fb;
+
+u32 stride;
+u32* framebuf;
 
 int main(int argc, char* argv[])
 {
@@ -29,7 +46,8 @@ int main(int argc, char* argv[])
 	//I have no idea what I'm doing and copied this from the simplegfx example
 	framebufferCreate(&fb, win, FB_WIDTH, FB_HEIGHT, PIXEL_FORMAT_RGBA_8888, 2);
 	framebufferMakeLinear(&fb);	
-
+	
+	init_map();
 	init_cells();
 	
     while (appletMainLoop())
@@ -40,11 +58,11 @@ int main(int argc, char* argv[])
 
         if (kDown & KEY_PLUS)
             break; 
-
-		memcpy(old_cells, cells, sizeof(cells));
+		
 		update_all_cells();
 		draw_all_cells();
-
+		swap_offset(); //flip array
+		
     }
 
 	framebufferClose(&fb);
@@ -54,30 +72,43 @@ int main(int argc, char* argv[])
 
 void update_all_cells()
 {
-	for (int y = 0; y < MAP_HEIGHT; y++)
+	for (int y = 0; y < map_height; y++)
 	{
-		for (int x = 0; x < MAP_WIDTH; x++)
+		for (int x = 0; x < map_width; x++)
 		{
 			int s = sum_cells_in_area(x, y);
 			
 			if (s == 3)
-				cells[y * MAP_WIDTH + x] = 1;
+				set_pos(x, y, 1);
 			else if (s == 2)
-				cells[y * MAP_WIDTH + x] = get_pos(x, y);
+				set_pos(x, y, get_pos(x, y));
 			else
-				cells[y * MAP_WIDTH + x] = 0;
+				set_pos(x, y, 0);
 		}
 	} 
 }
 
+//initialize map
+void init_map()
+{
+	map_width  = 192;
+	map_height = 128;
+	map_scale  = 2;
+	map_offset = 0;
+}
+
+//initializes cells randomly, at the given map size
+//requires initialized map before use.
 void init_cells()
 {
-	for (int y = 0; y < MAP_HEIGHT; y++)
+	for (int y = 0; y < map_height; y++)
 	{
-		for (int x = 0; x < MAP_WIDTH; x++)
+		for (int x = 0; x < map_width; x++)
 		{
-			if (rand() % 2 == 0)
-				cells[y * MAP_WIDTH + x] = 1;
+			set_pos(x, y, rand() % 2);
+			swap_offset();
+			set_pos(x, y, get_pos(x, y));
+			swap_offset();
 		}
 	}
 }
@@ -92,8 +123,8 @@ int sum_cells_in_area(int x, int y)
 	{
 		for (int ofs_y = -1; ofs_y <= 1; ofs_y++)
 		{
-			if (x + ofs_x > 0 && x + ofs_x < MAP_WIDTH
-			 && y + ofs_y > 0 && y + ofs_y < MAP_HEIGHT)
+			if (x + ofs_x > 0 && x + ofs_x < map_width
+			 && y + ofs_y > 0 && y + ofs_y < map_height)
 				if (get_pos(x + ofs_x, y + ofs_y) > 0 && !(ofs_x == 0 && ofs_y == 0))
 					sum++;
 		}
@@ -102,29 +133,45 @@ int sum_cells_in_area(int x, int y)
 	return sum;
 }
 
+//draws the cells to the screen
+//some variables here could probably be moved to/from this block.
 void draw_all_cells()
 {
-	u32 stride;
-	u32* framebuf = (u32*) framebufferBegin(&fb, &stride);
+	framebuf = (u32*) framebufferBegin(&fb, &stride);
 	
-	for (int y = 0; y < MAP_HEIGHT; y++)
+	for (int y = 0; y < map_height; y++)
 	{
-		for (int x = 0; x < MAP_WIDTH; x++)
+		for (int x = 0; x < map_width; x++)
 		{
-			u32 pos = y * stride / sizeof(u32) + x;	
-			
-			if (get_pos(x, y) > 0)
-				framebuf[pos] = 0xFFFFFFFF;
-			else
-				framebuf[pos] = 0x00000000;
+			set_pixel(x, y, get_pos(x, y) * 0xFFFFFFFF);
 		}
 	}
 	
 	framebufferEnd(&fb);
 }
 
-//convert xy to one-dimensional array location in cells[]
+void swap_offset()
+{
+	map_offset = (map_offset == 0) ? MAX_MAP_SIZE : 0;
+}
+
+//sets a pixel in the framebuffer.
+//make sure to initialize framebuffer first...
+void set_pixel(int x, int y, int rgba8888)
+{
+	u32 pos = y * stride / sizeof(u32) + x;	
+	
+	framebuf[pos] = rgba8888;
+}
+
+//sets the cell at the given position.
+void set_pos(int x, int y, int value)
+{
+	cells[y * MAX_WIDTH + x + map_offset] = value; 
+}
+
+//get cell at position.
 int get_pos(int x, int y)
 {
-	return old_cells[y * MAP_WIDTH + x];
+	return cells[y * MAX_WIDTH + x + (MAX_MAP_SIZE - map_offset)];
 }
